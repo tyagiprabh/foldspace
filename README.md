@@ -98,7 +98,7 @@ function and one label — no change to the registry, layout or renderer.
 | Scale | What breaks first | The fix, already seamed in |
 |---|---|---|
 | ~150 nodes | One `Mesh` per body | Every body already shares one `SphereGeometry`, so this is a straight swap to a single `InstancedMesh`; the loop iterates a flat `entries` array |
-| ~150 labels | One DOM node per label | Labels already cull by screen-space collision and camera distance; add a hard on-screen cap next |
+| ~150 labels | One DOM node per label | Already mostly solved: only the origin plus the hovered/selected body ever show, so at most three are visible at once regardless of registry size |
 | ~40 worlds | Ring crowding | Raise `WORLDS_PER_SHELL`, or group shells by `scope` |
 | Any | Finding things by orbiting | Already solved — `⌘K` palette searches name, role, model, world and tool names |
 
