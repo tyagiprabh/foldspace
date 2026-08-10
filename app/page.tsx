@@ -32,13 +32,22 @@ export default function Page() {
     }
   }, [])
 
-  // Deep link on load: /#nucleus-aria opens and flies to that agent.
+  // Deep link: /#nucleus-aria opens and flies to that agent. Also listens for
+  // hashchange, so pasting a link into an already-open tab works — and so does
+  // editing the hash by hand.
   useEffect(() => {
-    const id = window.location.hash.slice(1)
-    if (id && byId.has(id)) {
-      setSelected(id)
-      setFocus(id)
+    const apply = () => {
+      const id = window.location.hash.slice(1)
+      if (id && byId.has(id)) {
+        setSelected(id)
+        setFocus(id)
+      } else if (!id) {
+        setSelected(null)
+      }
     }
+    apply()
+    window.addEventListener('hashchange', apply)
+    return () => window.removeEventListener('hashchange', apply)
   }, [])
 
   useEffect(() => {
