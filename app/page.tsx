@@ -93,7 +93,7 @@ export default function Page() {
 
       <div className="sm-topleft">
         <button className="sm-btn" onClick={() => setTheme(theme === 'night' ? 'day' : 'night')}>
-          {theme === 'night' ? 'Desert noon' : 'Desert night'}
+          {theme === 'night' ? '☀ Dune' : '☾ Deep space'}
         </button>
         <button className="sm-btn" onClick={() => setPaletteOpen(true)}>
           Find <kbd>⌘K</kbd>

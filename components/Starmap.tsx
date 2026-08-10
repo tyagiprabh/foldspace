@@ -135,8 +135,10 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
     controls.maxDistance = 110
     controls.enablePan = false
     controls.target.copy(viewRef.current.target)
+    // Always on, including while the user drags. The reference does the same and
+    // it is most of why the scene feels alive rather than parked.
     controls.autoRotate = true
-    controls.autoRotateSpeed = 0.16
+    controls.autoRotateSpeed = 0.5
 
     // ── light: one hot desert sun, one cold sky bounce ──────────────────────
     scene.add(new THREE.AmbientLight(0xffe9c8, S.ambient))
@@ -156,8 +158,11 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
       return (seed - 1) / 2147483646
     }
 
+    // Held so the loop can turn the whole sky — the deep field drifts against
+    // the camera's own orbit, which is what stops the scene reading as static.
+    let starField: THREE.Points | null = null
     if (S.stars) {
-      const n = 1100
+      const n = 1400
       const pos = new Float32Array(n * 3)
       for (let i = 0; i < n; i++) {
         const r = 150 + rand() * 90
@@ -170,7 +175,8 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
       const g = new THREE.BufferGeometry()
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
       const m = new THREE.PointsMaterial({ color: 0xfff0d4, size: 0.7, transparent: true, opacity: 0.5, fog: false })
-      scene.add(new THREE.Points(g, m))
+      starField = new THREE.Points(g, m)
+      scene.add(starField)
       disposables.push(g, m)
     }
 
@@ -438,7 +444,6 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
     const onDown = (ev: PointerEvent) => {
       down = { x: ev.clientX, y: ev.clientY }
       lastTouch = performance.now()
-      controls.autoRotate = false
     }
     const onUp = (ev: PointerEvent) => {
       if (!down) return
@@ -456,7 +461,6 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
     }
     const onWheel = () => {
       lastTouch = performance.now()
-      controls.autoRotate = false
     }
 
     el.addEventListener('pointermove', onMove)
@@ -517,6 +521,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
           desiredTarget.set(target.x, target.y, target.z)
           desiredDist = target.kind === 'world' ? 12 : target.kind === 'hub' ? 34 : 6.5
           flying = true
+          // Off only for the duration of a scripted flight, or it fights us.
           controls.autoRotate = false
           lastTouch = performance.now()
         } else {
@@ -539,6 +544,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
         if (controls.target.distanceTo(desiredTarget) < 0.04 && Math.abs(d - desiredDist) < 0.12) {
           flying = false
           controls.enableDamping = true
+          controls.autoRotate = true
         }
       }
 
@@ -557,6 +563,11 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
         }
       }
 
+      if (starField) {
+        starField.rotation.y = t * 0.008
+        starField.rotation.x = Math.sin(t * 0.02) * 0.05
+      }
+
       // dust drift
       for (let i = 0; i < dustN; i++) {
         const ph = dustPhase[i]
@@ -567,8 +578,6 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
       dustGeo.getAttribute('position').needsUpdate = true
 
       // bodies + labels
-      const camDist = camera.position.distanceTo(controls.target)
-      const showMoons = camDist < 30
       boxes.length = 0
 
       for (const e of ordered) {
@@ -577,7 +586,9 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
         const hot = e.node.id === lastSel || e.node.id === hovered
         const structural = e.node.kind === 'hub' || e.node.kind === 'world'
 
-        const breathe = e.node.kind === 'hub' ? 1 + Math.sin(t * 1.1) * 0.022 : 1
+        // Every body pulses, phase-offset by its own x so the field never beats
+        // in unison. Amplitude and frequency lifted from the reference.
+        const breathe = 1 + Math.sin(t * 1.5 + e.node.x) * (e.node.kind === 'hub' ? 0.03 : 0.06)
         e.mesh.scale.setScalar(e.scale * breathe)
         e.mesh.rotation.y = e.spin + t * (e.node.kind === 'world' ? 0.055 : 0.2)
         if (e.node.kind === 'tool') e.mesh.rotation.x = e.spin + t * 0.16
@@ -598,7 +609,9 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
 
         // project → screen, then cull colliding labels by priority
         v.set(e.node.x, e.node.y, e.node.z).project(camera)
-        let show = v.z <= 1 && e.dim > 0.28 && (structural || showMoons || hot)
+        // The map stays clean: only the origin carries a standing label. Every
+        // other name arrives on hover or selection, so nothing competes.
+        let show = v.z <= 1 && e.dim > 0.28 && (e.node.kind === 'hub' || hot)
         if (show) {
           const sx = (v.x * 0.5 + 0.5) * width
           const sy = (-v.y * 0.5 + 0.5) * height + 13 + e.node.radius * 7
@@ -647,9 +660,6 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
         s.trail.rotateX(Math.PI / 2)
         ;(s.trail.material as THREE.MeshBasicMaterial).opacity = 0.34 * fade
       }
-
-      // resume the slow drift once the user has been still for a while
-      if (!flying && performance.now() - lastTouch > 7000) controls.autoRotate = true
 
       viewRef.current.pos.copy(camera.position)
       viewRef.current.target.copy(controls.target)
