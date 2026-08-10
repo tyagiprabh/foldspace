@@ -3,6 +3,9 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 
 import { byId, colorUnder, lanes, lanesFrom, neighboursOf, placed } from '../lib/graph'
 import type { Lens, Placed } from '../lib/graph'
@@ -32,11 +35,16 @@ const SKIN = {
     fillColor: 0xffffff,
     /** Base emissive — high enough that bodies read flat, not shaded. */
     emissive: 0.72,
-    lane: 0.14,
-    laneHot: 0.7,
+    lane: 0.1,
+    laneHot: 0.5,
     halo: 0.09,
     stars: true,
     ship: 0xdce8ff,
+    /** Quad width in px. The lit core is a fraction of this; the rest is
+     *  headroom the current blooms into. */
+    laneWidth: 7,
+    currentGain: 2.3,
+    sparkMix: 0.62,
   },
   day: {
     bg: 0xe8e0d0,
@@ -46,11 +54,15 @@ const SKIN = {
     fill: 0.7,
     fillColor: 0xfff4e2,
     emissive: 0.12,
-    lane: 0.24,
-    laneHot: 0.75,
+    lane: 0.22,
+    laneHot: 0.7,
     halo: 0.14,
     stars: false,
     ship: 0x3d5a75,
+    laneWidth: 6,
+    // On sand, added light washes out; darken the spark instead of whitening it.
+    currentGain: 1.5,
+    sparkMix: -0.5,
   },
 } as const
 
@@ -138,33 +150,147 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
       disposables.push(g, m)
     }
 
-    // ── lanes ───────────────────────────────────────────────────────────────
+    // ── lanes + current ─────────────────────────────────────────────────────
+    //
+    // One LineSegments2 for every lane: instanced quads, one draw call, and
+    // unlike LineBasicMaterial its `linewidth` is actually honoured (desktop GL
+    // silently ignores line width on LineBasicMaterial).
+    //
+    // The quad is deliberately much wider than the visible thread. At rest only
+    // a narrow core is lit, so the thread is a hairline; when a lane carries
+    // current the pulse blooms out into the full width of the quad it already
+    // owns. That gives per-lane apparent thickness from a single shared
+    // material, which LineMaterial's one uniform `linewidth` could not.
     const lanePos = new Float32Array(lanes.length * 6)
-    const laneCol = new Float32Array(lanes.length * 6)
     lanes.forEach((l, i) => {
       const a = byId.get(l.from)!
       const b = byId.get(l.to)!
       lanePos.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6)
     })
-    const laneGeo = new THREE.BufferGeometry()
-    laneGeo.setAttribute('position', new THREE.BufferAttribute(lanePos, 3))
-    laneGeo.setAttribute('color', new THREE.BufferAttribute(laneCol, 3))
-    const laneMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 1, depthWrite: false })
-    scene.add(new THREE.LineSegments(laneGeo, laneMat))
+
+    const laneCol = new Float32Array(lanes.length * 6)
+    // Per-lane charge (0 = dark thread, 1 = full current) and phase, so the
+    // lanes never pulse in lockstep.
+    const laneEnergy = new Float32Array(lanes.length)
+    const lanePhase = new Float32Array(lanes.length)
+    for (let i = 0; i < lanes.length; i++) {
+      // Golden-ratio stride: evenly spread, deterministic, no clustering.
+      lanePhase[i] = (i * 0.6180339887498949) % 1
+    }
+
+    const laneGeo = new LineSegmentsGeometry()
+    laneGeo.setPositions(lanePos)
+    laneGeo.setColors(laneCol)
+    const energyAttr = new THREE.InstancedBufferAttribute(laneEnergy, 1)
+    laneGeo.setAttribute('instanceEnergy', energyAttr)
+    laneGeo.setAttribute('instancePhase', new THREE.InstancedBufferAttribute(lanePhase, 1))
+
+    const laneMat = new LineMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      // Screen-space width in px. NOT worldUnits: that path drops the `vUv`
+      // varying the pulse needs, and a pixel width keeps threads crisp at
+      // every zoom level instead of thinning to nothing when you pull back.
+      linewidth: S.laneWidth,
+    })
+    laneMat.resolution.set(width, height)
+
+    // Uniforms the injected shader owns.
+    const laneUniforms = {
+      uTime: { value: 0 },
+      uSpeed: { value: 0.3 },
+      uCoreHalf: { value: 0.07 },
+      uCoreSoft: { value: 0.13 },
+      uTailK: { value: 13.0 },
+      uHeadW: { value: 0.022 },
+      uGain: { value: S.currentGain },
+      uSparkMix: { value: S.sparkMix },
+    }
+    Object.assign(laneMat.uniforms, laneUniforms)
+
+    // LineMaterial is a ShaderMaterial, so its shader source lives on the
+    // instance and can be edited before first compile.
+    laneMat.vertexShader = `
+      attribute float instanceEnergy;
+      attribute float instancePhase;
+      varying float vEnergy;
+      varying float vPhase;
+    ${laneMat.vertexShader.replace(
+      'void main() {',
+      `void main() {
+        vEnergy = instanceEnergy;
+        vPhase = instancePhase;`,
+    )}`
+
+    laneMat.fragmentShader = `
+      varying float vEnergy;
+      varying float vPhase;
+      uniform float uTime;
+      uniform float uSpeed;
+      uniform float uCoreHalf;
+      uniform float uCoreSoft;
+      uniform float uTailK;
+      uniform float uHeadW;
+      uniform float uGain;
+      uniform float uSparkMix;
+    ${laneMat.fragmentShader.replace(
+      'gl_FragColor = vec4( diffuseColor.rgb, alpha );',
+      `
+      // vUv.y runs +1 at the segment start to -1 at the end (|vUv.y| > 1 is the
+      // cap region); vUv.x is -1..1 across the width. Verified against
+      // LineSegmentsGeometry's uv attribute — it is NOT (along, across).
+      float along = ( 1.0 - vUv.y ) * 0.5;
+      float across = abs( vUv.x );
+
+      // The resting thread: a narrow lit core inside a wide quad.
+      float core = 1.0 - smoothstep( uCoreHalf, uCoreHalf + uCoreSoft, across );
+
+      // Two charges per lane, half a cycle apart, each a sharp head trailing an
+      // exponential tail. Continuous in the fragment, so it reads as current in
+      // a wire rather than beads on a string.
+      float wave = 0.0;
+      for ( int k = 0; k < 2; k++ ) {
+        float head = fract( uTime * uSpeed + vPhase + float( k ) * 0.5 );
+        float behind = fract( head - along );
+        float tail = exp( -behind * uTailK );
+        float spark = smoothstep( uHeadW, 0.0, min( behind, 1.0 - behind ) );
+        wave += tail * 0.34 + spark;
+      }
+      wave *= vEnergy;
+
+      // Current blooms across the whole quad; the resting core does not.
+      float glow = wave * ( 1.0 - smoothstep( 0.0, 1.0, across ) );
+
+      vec3 spark = mix( diffuseColor.rgb, vec3( 1.0 ), uSparkMix );
+      vec3 rgb = diffuseColor.rgb + spark * glow * uGain;
+      gl_FragColor = vec4( rgb, alpha * max( core, min( glow, 1.0 ) ) );`,
+    )}`
+
+    const laneMesh = new LineSegments2(laneGeo, laneMat)
+    // Lanes are decoration; never let them swallow a click meant for a body.
+    laneMesh.raycast = () => {}
+    scene.add(laneMesh)
     disposables.push(laneGeo, laneMat)
 
     const bg = new THREE.Color(S.bg)
     const scratch = new THREE.Color()
+    const laneColorBuf = (laneGeo.getAttribute('instanceColorStart') as THREE.InterleavedBufferAttribute).data
 
     /**
      * Lanes carry their own end's colour, pre-mixed toward the background to
-     * fake per-line opacity. One draw call, no per-lane materials.
+     * fake per-line opacity.
+     *
+     * Nothing is "hot" until something is selected. Keying brightness off
+     * `!l.spine` meant the cross-world routes sat at full highlight on an idle
+     * map, which is what made the threads glare instead of whisper.
      */
     function paintLanes(sel: string | null) {
       const near = sel ? neighboursOf(sel) : null
       lanes.forEach((l, i) => {
-        const hot = near ? near.has(l.from) && near.has(l.to) : !l.spine
-        const alpha = hot ? S.laneHot : near ? S.lane * 0.35 : S.lane
+        const hot = near !== null && near.has(l.from) && near.has(l.to)
+        const alpha = hot ? S.laneHot : near ? S.lane * 0.3 : S.lane
         const own = colorUnder(byId.get(l.spine ? l.to : l.from)!, lens)
         const c = scratch.set(own).lerp(bg, 1 - alpha)
         for (let v = 0; v < 2; v++) {
@@ -173,7 +299,22 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
           laneCol[i * 6 + v * 3 + 2] = c.b
         }
       })
-      laneGeo.getAttribute('color').needsUpdate = true
+      laneColorBuf.needsUpdate = true
+    }
+
+    /**
+     * Which lanes carry current. Everything touching the selection runs at full
+     * charge; the real cross-world routes keep a faint trickle on an idle map so
+     * it never looks switched off. Structural spine lanes stay dark.
+     */
+    const laneTarget = new Float32Array(lanes.length)
+    function chargeLanes(sel: string | null, hov: string | null) {
+      const key = sel ?? hov
+      const near = key ? neighboursOf(key) : null
+      for (let i = 0; i < lanes.length; i++) {
+        const l = lanes[i]
+        laneTarget[i] = near ? (near.has(l.from) && near.has(l.to) ? 1 : 0) : l.spine ? 0 : 0.3
+      }
     }
 
     // ── bodies: one shape, one flat colour, one soft halo ───────────────────
@@ -249,7 +390,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
 
     // ── ships: arrowheads that fly the selected body's lanes ────────────────
     const SHIP_POOL = 48
-    const shipGeo = new THREE.ConeGeometry(0.1, 0.38, 4, 1)
+    const shipGeo = new THREE.ConeGeometry(0.085, 0.32, 4, 1)
     shipGeo.rotateX(Math.PI / 2)
     disposables.push(shipGeo)
 
@@ -277,6 +418,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
       }
       if (!id) return
       lanesFrom(id)
+        .filter((l) => !l.spine)
         .slice(0, SHIP_POOL)
         .forEach((l, i) => {
           const s = ships[i]
@@ -330,6 +472,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
       camera.aspect = width / height
       camera.updateProjectionMatrix()
       renderer.setSize(width, height)
+      laneMat.resolution.set(width, height)
     })
     ro.observe(host)
 
@@ -342,6 +485,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
 
     paintLanes(lastSel)
     applyStates(lastSel, null)
+    chargeLanes(lastSel, null)
     launch(lastSel)
 
     const v = new THREE.Vector3()
@@ -362,6 +506,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
         lastSel = selRef.current
         paintLanes(lastSel)
         applyStates(lastSel, hovered)
+        chargeLanes(lastSel, hovered)
         launch(lastSel)
       }
 
@@ -406,8 +551,22 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
           el.style.cursor = id ? 'pointer' : 'grab'
           onHoverRef.current(id)
           applyStates(lastSel, hovered)
+          chargeLanes(lastSel, hovered)
         }
       }
+
+      // Current: advance the pulse, and ease each lane's charge so lanes light
+      // up and fade out rather than snapping.
+      laneUniforms.uTime.value = t
+      let chargeDirty = false
+      for (let i = 0; i < lanes.length; i++) {
+        const d = laneTarget[i] - laneEnergy[i]
+        if (Math.abs(d) > 0.001) {
+          laneEnergy[i] += d * 0.08
+          chargeDirty = true
+        }
+      }
+      if (chargeDirty) energyAttr.needsUpdate = true
 
       if (starField) {
         starField.rotation.y = t * 0.008
@@ -458,7 +617,7 @@ export default function Starmap({ theme, lens, selected, focus, onSelect, onHove
         s.hull.position.copy(pa).lerp(pb, s.t)
         s.hull.lookAt(pb)
         // Fade at both ends so ships never pop in or out.
-        ;(s.hull.material as THREE.MeshBasicMaterial).opacity = 0.9 * Math.min(1, Math.min(s.t, 1 - s.t) * 9)
+        ;(s.hull.material as THREE.MeshBasicMaterial).opacity = 0.75 * Math.min(1, Math.min(s.t, 1 - s.t) * 9)
       }
 
       viewRef.current.pos.copy(camera.position)

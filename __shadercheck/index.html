@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>shader check</title>
+    <style>
+      body { margin: 0; background: #050811; color: #ddd; font: 13px ui-monospace, monospace; }
+      #log { position: fixed; inset: 0; padding: 12px; white-space: pre-wrap; pointer-events: none; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="log">booting…</div>
+    <script type="module">
+      import * as THREE from '/node_modules/three/build/three.module.js'
+      import { vertexShader, fragmentShader } from './shaders.js'
+
+      const out = []
+      const log = (s) => {
+        out.push(s)
+        document.getElementById('log').textContent = out.join('\n')
+      }
+
+      try {
+        log('three ' + THREE.REVISION)
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true })
+        renderer.setSize(800, 500)
+        document.body.appendChild(renderer.domElement)
+        log('webgl2: ' + (renderer.getContext() instanceof WebGL2RenderingContext))
+
+        const scene = new THREE.Scene()
+        scene.background = new THREE.Color(0x050811)
+        scene.fog = new THREE.Fog(0x050811, 46, 130)
+        const camera = new THREE.PerspectiveCamera(55, 800 / 500, 0.1, 400)
+        camera.position.set(0, 11, 37)
+        camera.lookAt(0, 0, 0)
+
+        // ── base strip, mirroring baseStrip() in lib/laneFlow.ts ────────────
+        const SEG = 22
+        const pos = new Float32Array((SEG + 1) * 2 * 3)
+        for (let i = 0; i <= SEG; i++) {
+          const s = i / SEG
+          const a = i * 2 * 3
+          pos[a] = s
+          pos[a + 1] = -1
+          pos[a + 3] = s
+          pos[a + 4] = 1
+        }
+        const idx = new Uint16Array(SEG * 6)
+        for (let i = 0; i < SEG; i++) {
+          const a = i * 2
+          idx.set([a, a + 1, a + 2, a + 1, a + 3, a + 2], i * 6)
+        }
+
+        const N = 300
+        const geometry = new THREE.InstancedBufferGeometry()
+        geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+        geometry.setIndex(new THREE.BufferAttribute(idx, 1))
+        geometry.instanceCount = N
+
+        const f3 = () => new Float32Array(N * 3)
+        const f4 = () => new Float32Array(N * 4)
+        const iA = f3(), iB = f3(), iBow = f3(), iColA = f3(), iColB = f3()
+        const iMeta = f4(), iState = f4()
+        for (let i = 0; i < N; i++) {
+          const a = (i / N) * Math.PI * 2
+          iA.set([Math.cos(a) * 16, Math.sin(a * 3) * 3, Math.sin(a) * 16], i * 3)
+          iB.set([0, 0, 0], i * 3)
+          iBow.set([0, 1.6, 0], i * 3)
+          iColA.set([0.2, 0.5, 0.95], i * 3)
+          iColB.set([0.95, 0.6, 0.2], i * 3)
+          iMeta.set([16 / 9, i / N, (i * 7) % 1, 0], i * 4)
+          iState.set([i % 3 === 0 ? 1 : 0.06, 1, 1, i % 3 === 0 ? 0 : 1], i * 4)
+        }
+        geometry.setAttribute('iA', new THREE.InstancedBufferAttribute(iA, 3))
+        geometry.setAttribute('iB', new THREE.InstancedBufferAttribute(iB, 3))
+        geometry.setAttribute('iBow', new THREE.InstancedBufferAttribute(iBow, 3))
+        geometry.setAttribute('iColA', new THREE.InstancedBufferAttribute(iColA, 3))
+        geometry.setAttribute('iColB', new THREE.InstancedBufferAttribute(iColB, 3))
+        geometry.setAttribute('iMeta', new THREE.InstancedBufferAttribute(iMeta, 4))
+        const stateAttr = new THREE.InstancedBufferAttribute(iState, 4)
+        stateAttr.setUsage(THREE.DynamicDrawUsage)
+        geometry.setAttribute('iState', stateAttr)
+
+        const uniforms = {
+          uResolution: { value: new THREE.Vector2(800, 500) },
+          uWidth: { value: 8 },
+          uTaper: { value: 0.62 },
+          uFlow: { value: 0 },
+          uSlow: { value: 0 },
+          uHair: { value: 0.62 },
+          uCore: { value: 1.5 },
+          uGlow: { value: 3.4 },
+          uTailK: { value: 6 },
+          uNoseK: { value: 34 },
+          uThreadA: { value: 0.075 },
+          uCoreA: { value: 0.95 },
+          uGlowA: { value: 0.22 },
+          uHotMix: { value: 0.55 },
+          uHot: { value: new THREE.Color(0xf2f6ff) },
+          uFogColor: { value: new THREE.Color(0x050811) },
+          uFogNear: { value: 46 },
+          uFogFar: { value: 130 },
+        }
+
+        const mkMat = (additive) =>
+          new THREE.ShaderMaterial({
+            uniforms,
+            vertexShader,
+            fragmentShader,
+            defines: additive ? { ADDITIVE: 1 } : {},
+            transparent: true,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            fog: false,
+            blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+          })
+
+        // Compile BOTH skins' variants so a define-only bug cannot hide.
+        const matNight = mkMat(true)
+        const matDay = mkMat(false)
+
+        const mesh = new THREE.Mesh(geometry, matNight)
+        mesh.frustumCulled = false
+        mesh.renderOrder = -1
+        scene.add(mesh)
+
+        renderer.compile(scene, camera)
+        log('compiled night variant, programs=' + renderer.info.programs.length)
+        mesh.material = matDay
+        renderer.compile(scene, camera)
+        log('compiled day variant, programs=' + renderer.info.programs.length)
+
+        // Real draws — a compile can succeed where a draw fails on attributes.
+        mesh.material = matNight
+        renderer.render(scene, camera)
+        uniforms.uFlow.value = 0.37
+        stateAttr.needsUpdate = true
+        renderer.render(scene, camera)
+        mesh.material = matDay
+        renderer.render(scene, camera)
+
+        const gl = renderer.getContext()
+        log('gl error after draws: ' + gl.getError() + ' (0 = none)')
+        log('render.calls=' + renderer.info.render.calls + ' triangles=' + renderer.info.render.triangles)
+
+        // Read back a pixel to prove something was actually rasterised.
+        mesh.material = matNight
+        renderer.render(scene, camera)
+        const px = new Uint8Array(4)
+        gl.readPixels(400, 250, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px)
+        log('centre pixel: ' + Array.from(px).join(','))
+
+        let nonBg = 0
+        const buf = new Uint8Array(800 * 500 * 4)
+        gl.readPixels(0, 0, 800, 500, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+        for (let i = 0; i < buf.length; i += 4) {
+          if (buf[i] > 12 || buf[i + 1] > 14 || buf[i + 2] > 24) nonBg++
+        }
+        log('lit pixels above background: ' + nonBg)
+        log('RESULT: OK')
+      } catch (e) {
+        log('RESULT: FAIL ' + (e && e.message ? e.message : String(e)))
+        console.error(e)
+      }
+    </script>
+  </body>
+</html>
