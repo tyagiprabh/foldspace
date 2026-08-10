@@ -1,13 +1,12 @@
-/* Desert night / desert noon. Warm neutrals only — no blue-blacks. */
+/* Deep space (cool neutrals) and Dune (warm sand). Both plain. */
 :root {
-  --ink: #f0e6d2;
-  --ink-dim: #a2957c;
-  --ink-faint: #6f6552;
-  --panel: rgba(20, 16, 11, 0.78);
-  --panel-line: rgba(240, 230, 210, 0.11);
-  --chip: rgba(240, 230, 210, 0.07);
-  --bg: #0b0906;
-  --grain: 0.05;
+  --ink: #e6ebf5;
+  --ink-dim: #8d95a8;
+  --ink-faint: #5b6374;
+  --panel: rgba(11, 15, 26, 0.78);
+  --panel-line: rgba(230, 235, 245, 0.11);
+  --chip: rgba(230, 235, 245, 0.07);
+  --bg: #050811;
   color-scheme: dark;
 }
 
@@ -18,8 +17,7 @@
   --panel: rgba(248, 242, 230, 0.84);
   --panel-line: rgba(36, 29, 18, 0.13);
   --chip: rgba(36, 29, 18, 0.07);
-  --bg: #e6dcc8;
-  --grain: 0.03;
+  --bg: #e8e0d0;
   color-scheme: light;
 }
 
@@ -44,7 +42,7 @@ body {
   inset: 0;
 }
 
-/* ── canvas, labels, film grade ────────────────────────────────────────── */
+/* ── canvas + labels ────────────────────────────────────────── */
 
 .sm-canvas {
   position: absolute;
@@ -87,60 +85,9 @@ body {
 }
 
 .sm-label--hub {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.3em;
-}
-
-.sm-label--world {
   font-size: 12px;
   font-weight: 650;
-  letter-spacing: 0.16em;
-}
-
-/* Sand haze at the horizon + a soft vignette. Both are pure overlay. */
-.sm-vignette {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  background:
-    radial-gradient(120% 78% at 50% 42%, transparent 38%, rgba(0, 0, 0, 0.5) 100%),
-    linear-gradient(to top, rgba(196, 140, 70, 0.14), transparent 42%);
-}
-
-:root[data-theme='day'] .sm-vignette {
-  background:
-    radial-gradient(120% 80% at 50% 42%, transparent 44%, rgba(90, 70, 40, 0.22) 100%),
-    linear-gradient(to top, rgba(198, 168, 116, 0.3), transparent 46%);
-}
-
-.sm-grain {
-  position: absolute;
-  inset: -50%;
-  z-index: 2;
-  pointer-events: none;
-  opacity: var(--grain);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-  animation: sm-grain 700ms steps(2) infinite;
-}
-
-@keyframes sm-grain {
-  0% {
-    transform: translate(0, 0);
-  }
-  50% {
-    transform: translate(-2%, 1.5%);
-  }
-  100% {
-    transform: translate(1.5%, -2%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sm-grain {
-    animation: none;
-  }
+  letter-spacing: 0.14em;
 }
 
 /* ── chrome ────────────────────────────────────────────────────────────── */
@@ -157,20 +104,11 @@ body {
 
 .sm-header h1 {
   margin: 0;
-  font-size: 30px;
-  font-weight: 300;
-  letter-spacing: 0.42em;
-  text-indent: 0.42em;
-  background: linear-gradient(180deg, #fbf0d8 0%, #d8a45c 62%, #a86b34 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-:root[data-theme='day'] .sm-header h1 {
-  background: linear-gradient(180deg, #4a3418 0%, #8c5c22 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+  color: var(--ink);
 }
 
 .sm-header p {

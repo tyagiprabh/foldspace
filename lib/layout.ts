@@ -116,27 +116,28 @@ export function moonOffset(i: number, n: number) {
 }
 
 /**
- * Dune-flavoured desert palette. Hue is derived from the world id so a new
- * world gets a stable colour without anyone picking one, then pinned into a
- * warm sand-to-spice band with two cool escapes so clusters stay separable.
+ * Vivid, well-separated hues. A world's slot is still derived from its id so a
+ * new world gets a stable colour without anyone picking one — only the values
+ * changed, not the mechanism.
  */
-const BAND: [number, number, number][] = [
-  [36, 68, 58], // spice gold
-  [16, 62, 48], // rust
-  [8, 48, 44], // oxide red
-  [28, 42, 62], // copper sand
-  [46, 34, 52], // dry olive
-  [196, 34, 56], // deep spice blue
-  [172, 30, 50], // verdigris
-  [280, 22, 56], // dusk violet
-  [30, 14, 62], // bone
+const BAND: string[] = [
+  '#3B82F6', // blue
+  '#10B981', // emerald
+  '#8B5CF6', // violet
+  '#F97316', // orange
+  '#EC4899', // pink
+  '#EF4444', // red
+  '#06B6D4', // cyan
+  '#6366F1', // indigo
+  '#84CC16', // lime
+  '#9CA3AF', // grey
 ]
 
 /**
- * Each world hashes to a preferred palette slot, then collisions walk to the
- * next free slot. Worlds are processed in id order, so adding a world only
- * recolours one that it actually collides with — never the whole map. Past
- * `BAND.length` worlds the band wraps and lightness carries the difference.
+ * Each world hashes to a preferred slot, then collisions walk to the next free
+ * one. Worlds are processed in id order, so adding a world only recolours one
+ * it actually collides with — never the whole map. Past `BAND.length` worlds the
+ * band wraps and lightness carries the difference.
  */
 export function assignColors(ids: string[]): Map<string, string> {
   const taken = new Map<number, number>()
@@ -147,32 +148,22 @@ export function assignColors(ids: string[]): Map<string, string> {
     let slot = pref
     for (let step = 0; step < BAND.length; step++) {
       const cand = (pref + step) % BAND.length
-      if (!taken.has(cand)) {
-        slot = cand
-        break
-      }
       slot = cand
+      if (!taken.has(cand)) break
     }
     const wrap = taken.get(slot) ?? 0
     taken.set(slot, wrap + 1)
-
-    const [h, s, l] = BAND[slot]
-    // Wrapped worlds step lighter; unwrapped ones get a small stable jitter.
-    const dl = wrap * 11 + (hash01(id + '#l') - 0.5) * 5
-    out.set(id, hslToHex(h, s, Math.max(28, Math.min(78, l + dl))))
+    out.set(id, wrap === 0 ? BAND[slot] : lighten(BAND[slot], wrap * 16))
   }
   return out
 }
 
-export function hslToHex(h: number, s: number, l: number): string {
-  const S = s / 100
-  const L = l / 100
-  const k = (n: number) => (n + h / 30) % 12
-  const a = S * Math.min(L, 1 - L)
-  const f = (n: number) => L - a * Math.max(-1, Math.min(Math.min(k(n) - 3, 9 - k(n)), 1))
-  const to = (v: number) =>
-    Math.round(255 * v)
-      .toString(16)
-      .padStart(2, '0')
-  return `#${to(f(0))}${to(f(8))}${to(f(4))}`
+/** Push a hex colour toward white by `amount` percent. */
+function lighten(hex: string, amount: number): string {
+  const n = parseInt(hex.slice(1), 16)
+  const mix = (c: number) => Math.round(c + (255 - c) * (amount / 100))
+  const r = mix((n >> 16) & 255)
+  const g = mix((n >> 8) & 255)
+  const b = mix(n & 255)
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`
 }

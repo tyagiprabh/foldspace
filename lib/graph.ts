@@ -9,7 +9,7 @@ export type { Body, Kind, Route, Runtime, Status, World }
 export { registry }
 
 export const HUB_ID = '__hub__'
-export const HUB_COLOR = '#E4B25E'
+export const HUB_COLOR = '#F59E0B'
 
 export interface Placed {
   id: string
@@ -39,7 +39,7 @@ export interface Placed {
   shell?: number
 }
 
-const RADIUS: Record<Kind, number> = { hub: 1.3, world: 0.78, agent: 0.36, tool: 0.3 }
+const RADIUS: Record<Kind, number> = { hub: 0.72, world: 0.5, agent: 0.34, tool: 0.3 }
 export const KIND_LABEL: Record<Kind, string> = { hub: 'Origin', world: 'World', agent: 'Agent', tool: 'Tool' }
 
 const colors = assignColors(registry.worlds.map((w) => w.id))

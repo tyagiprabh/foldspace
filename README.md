@@ -97,7 +97,7 @@ function and one label — no change to the registry, layout or renderer.
 
 | Scale | What breaks first | The fix, already seamed in |
 |---|---|---|
-| ~150 nodes | One `Mesh` per body | Swap to one `InstancedMesh` per kind; the render loop already iterates a flat `entries` array |
+| ~150 nodes | One `Mesh` per body | Every body already shares one `SphereGeometry`, so this is a straight swap to a single `InstancedMesh`; the loop iterates a flat `entries` array |
 | ~150 labels | One DOM node per label | Labels already cull by screen-space collision and camera distance; add a hard on-screen cap next |
 | ~40 worlds | Ring crowding | Raise `WORLDS_PER_SHELL`, or group shells by `scope` |
 | Any | Finding things by orbiting | Already solved — `⌘K` palette searches name, role, model, world and tool names |
@@ -176,11 +176,16 @@ components/Palette.tsx     ⌘K jump-to-node
 
 | | |
 |---|---|
-| Drag | Orbit |
+| Drag | Orbit (the map keeps its own slow rotation) |
 | Scroll | Zoom |
 | Click a body | Inspect, and launch ships down its lanes |
 | `⌘K` / `/` | Find an agent, tool, model or repo |
 | `L` | Cycle lens |
 | `Esc` | Deselect |
 
-Idle for 7 seconds and the map resumes its slow drift.
+The map rotates continuously and every body breathes on a phase offset. Only the
+origin carries a standing label — every other name arrives on hover or
+selection, which is what keeps a growing map readable.
+
+Two skins, both deliberately plain: **Deep space** and **Dune**. No
+post-processing, no rings, no dust, no film grain.

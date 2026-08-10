@@ -81,9 +81,6 @@ export default function Page() {
         onHover={setHovered}
       />
 
-      <div className="sm-grain" aria-hidden />
-      <div className="sm-vignette" aria-hidden />
-
       <header className="sm-header">
         <h1>{APP.name}</h1>
         <p>
