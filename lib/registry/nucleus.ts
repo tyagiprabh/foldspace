@@ -2,7 +2,7 @@ import { defineBodies, defineRoutes, defineWorld } from '../schema'
 
 export const world = defineWorld({
   id: 'nucleus',
-  name: 'Nucleus',
+  name: 'Nucleus HR',
   scope: 'work',
   source: 'work/Nucleus',
   runtime: 'api',
