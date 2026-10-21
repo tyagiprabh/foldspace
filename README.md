@@ -189,3 +189,9 @@ selection, which is what keeps a growing map readable.
 
 Two skins, both deliberately plain: **Deep space** and **Dune**. No
 post-processing, no rings, no dust, no film grain.
+
+---
+
+## License
+
+MIT, see [LICENSE](LICENSE).
